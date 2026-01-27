@@ -76,7 +76,7 @@ If you want to initiate a direct call to a SIP endpoint without credentials, use
 
 ## Testing
 
-You should be running Asterisk or some other sip service.
+You should be running Asterisk or some other SIP service.
 
 Run slmodemd from 2 terminals and specifying different modem devices. Export sip accounts per slmodem:
 
@@ -84,7 +84,7 @@ Run slmodemd from 2 terminals and specifying different modem devices. Export sip
 
     # ./slmodemd/slmodemd -d2 -e ./d-modem /dev/slamr1
 
-In 2 other terminals, connect to the newly created serial devices:
+In two other terminals, connect to the newly created serial devices:
 
     # minicom -D /dev/ttySL0
 
@@ -112,7 +112,7 @@ To stop data transmission, first escape from on-line mode (+++), then hang up:
     +++
     ath
 
-Commands to pass modem terminal through to a VM (eg Windows) from an LXC container (running SLModem). VM will need serial device.
+Commands to pass a modem terminal through to a VM (e.g., Windows) from an LXC container (running SLModem). The VM will need a serial device.
 
     ;on proxmox/qemu host
     # socat -d -d TCP-L:[TCP PORT] UNIX-CLIENT:/var/run/qemu-server/[guest id].serial0
@@ -127,8 +127,8 @@ In the VM, open a terminal program and dial out to another modem using the seria
 ## Known Issues / Future Work
 - Additional logging/error handling is needed 
 - The serial interface could be replaced with stdio or a socket, and common AT configuration options could be exposed as command line options 
-- d-modem can now recieve calls but it is buggy
-- call handling needs work. might not make another call after it has made one.
+- d-modem can now receive calls, but it is buggy
+- Call handling needs work. It might not make another call after it has made one.
 
 
 Copyright 2021 Aon plc

@@ -50,6 +50,8 @@ static int volume = 0;
 static int sipsocket;
 static int answercall;
 static int sip_modem_hookstate =0;
+static pjsua_call_id pending_call_id = PJSUA_INVALID_ID;
+static pj_bool_t pending_call_active = PJ_FALSE;
 
 #ifdef WITH_AUDIO
 static pjsua_conf_port_id left_audio_id, right_audio_id;
@@ -115,6 +117,9 @@ static pj_status_t dmodem_get_frame(pjmedia_port *this_port, pjmedia_frame *fram
 
 	while(running) {
 		if ((len=read(sm->sock, &socket_frame, sizeof(socket_frame))) != sizeof(socket_frame)) {
+			if (len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				continue;
+			}
 			// error_exit("error reading frame",0);
 			printf("dmodem_get_frame: error reading frame\n");
 			return PJSIP_EINVALIDMSG;
@@ -198,6 +203,12 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
 			if (pjsua_conf_disconnect(port.port_id, current_conf_slot) != PJ_SUCCESS)
 				error_exit("can't connect modem port (in)",0);
 			current_conf_slot = -1;
+		}
+		answercall = 0;
+		sip_modem_hookstate = 0;
+		if (pending_call_active && pending_call_id == call_id) {
+			pending_call_active = PJ_FALSE;
+			pending_call_id = PJSUA_INVALID_ID;
 		}
 	}
 }
@@ -316,6 +327,13 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 	PJ_LOG(3,(__FILE__, "Incoming call from %.*s!!",
                          (int)inci.remote_info.slen,
                          inci.remote_info.ptr));
+	if (pending_call_active) {
+		printf("Incoming call while another is pending; rejecting.\n");
+		pjsua_call_answer(call_id, 486, NULL, NULL);
+		return;
+	}
+	pending_call_active = PJ_TRUE;
+	pending_call_id = call_id;
 	sip_socket_frame.type = SOCKET_FRAME_SIP_INFO;
 	printf("return_data_to_modem: write to socket\n");
 	snprintf(sip_socket_frame.data.sip.info,256,"SR");
@@ -324,14 +342,6 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 	if (ret != sizeof(sip_socket_frame)) {
 			perror("return_data_to_child: write fail\n");
 		exit(EXIT_FAILURE);
-	}
-
-	while(inci.media_status == PJSUA_CALL_MEDIA_NONE){
-		if (answercall == 1){
-			answercall = 0;
-			pjsua_call_answer(call_id, 200, NULL, NULL);
-			return;
-		}
 	}
 }
 
@@ -382,25 +392,27 @@ int main(int argc, char *argv[]) {
 	} else {
 		sip_domain = strchr(sip_user,'@');
 		if (!sip_domain) {
-			fprintf(stderr, "Can't find SIP domain in SIP_LOGN!\n");
+			fprintf(stderr, "Can't find SIP domain in SIP_LOGIN!\n");
 			exit(EXIT_FAILURE);
 		}
 		*sip_domain++ = '\0';
 		sip_pass = strchr(sip_user,':');
 		if (!sip_pass) {
-			fprintf(stderr, "Can't find SIP password in SIP_LOGN!\n");
+			fprintf(stderr, "Can't find SIP password in SIP_LOGIN!\n");
 			exit(EXIT_FAILURE);
 		}
 		*sip_pass++ = '\0';
 		direct_call = 0;
 	}
 
-	if (strchr(dialstr, '@')) {
-		printf("Found '@' in %s, continuing with direct call\n", dialstr);
-		direct_call = 1;
-	} else if (direct_call == 1) {
-		fprintf(stderr, "No SIP credentials and not a direct call: %s\n", dialstr);
-		exit(EXIT_FAILURE);
+	if (dialstr[0]) {
+		if (strchr(dialstr, '@')) {
+			printf("Found '@' in %s, continuing with direct call\n", dialstr);
+			direct_call = 1;
+		} else if (direct_call == 1) {
+			fprintf(stderr, "No SIP credentials and not a direct call: %s\n", dialstr);
+			exit(EXIT_FAILURE);
+		}
 	}
 
 	status = pjsua_create();
@@ -590,6 +602,11 @@ int main(int argc, char *argv[]) {
 					if (strncmp(packet,"A",1) == 0){
 						//Answer SIP Call...
 						answercall = 1;
+						if (pending_call_active && pending_call_id != PJSUA_INVALID_ID) {
+							pjsua_call_answer(pending_call_id, 200, NULL, NULL);
+							pending_call_active = PJ_FALSE;
+							pending_call_id = PJSUA_INVALID_ID;
+						}
 					}
 					if (strncmp(packet,"H",1) == 0){
 						packet++;
@@ -617,14 +634,33 @@ int main(int argc, char *argv[]) {
 						sprintf(sipcid,"%s",packet);
 						sprintf(buf,"sip:%s@%s",sipcid,sip_domain);
 						pj_str_t sipuri = pj_str(buf);
-						printf("dmodem_main: new dialstring: %s \n",sipcid);
-						printf("dmodem_main: sip dialstring: %s \n",buf);
-
 						//check cid
 						if (sipcid[0]){
 							printf("dmodem_main: dialling..\n");
 							//make call
 							pjsua_call_id callid;
+							pj_str_t sipuri;
+							if (strncmp(sipcid, "sip:", 4) == 0 || strncmp(sipcid, "sips:", 5) == 0) {
+								sipuri = pj_str(sipcid);
+								printf("dmodem_main: sip dialstring: %s \n", sipcid);
+							} else if (strchr(sipcid, '@')) {
+								snprintf(buf, sizeof(buf), "sip:%s", sipcid);
+								sipuri = pj_str(buf);
+								printf("dmodem_main: sip dialstring: %s \n", buf);
+							} else if (sip_domain) {
+								snprintf(buf, sizeof(buf), "sip:%s@%s", sipcid, sip_domain);
+								sipuri = pj_str(buf);
+								printf("dmodem_main: sip dialstring: %s \n", buf);
+							} else {
+								fprintf(stderr, "No SIP domain set; cannot dial %s\n", sipcid);
+								snprintf(sip_socket_frame.data.sip.info, 256, "SH");
+								if ((len=write(sipsocket, &sip_socket_frame, sizeof(sip_socket_frame))) != sizeof(sip_socket_frame)) {
+									printf("dmodem_main: error writing frame %i\n",len);
+								}
+								break;
+							}
+							printf("dmodem_main: new dialstring: %s \n",sipcid);
+
 							//update modem of call state
 							sprintf(sip_socket_frame.data.sip.info,"CALLING");
 							if ((len=write(sipsocket, &sip_socket_frame, sizeof(sip_socket_frame))) != sizeof(sip_socket_frame)) {
