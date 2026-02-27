@@ -40,6 +40,10 @@ struct dmodem {
 	pj_sock_t sock;
 };
 
+typedef struct {
+    pj_bool_t is_busy_rejected;
+} call_data_t;
+
 
 static struct dmodem port;
 static bool running = false;
@@ -175,6 +179,19 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e) {
 	pjsua_call_info ci;
 	struct socket_frame sip_socket_frame;
 	int ret = 0;
+
+	call_data_t *data = pjsua_call_get_user_data(call_id);
+    if (!data) return;
+	if (data->is_busy_rejected) {
+        // not our main call, ignore except for cleanup
+        pjsua_call_info ci;
+        pjsua_call_get_info(call_id, &ci);
+        if (ci.state == PJSIP_INV_STATE_DISCONNECTED) {
+            free(data);
+            pjsua_call_set_user_data(call_id, NULL);
+        }
+        return;
+    }
 
 	memset(&sip_socket_frame, 0, sizeof(sip_socket_frame));
 	PJ_UNUSED_ARG(e);
@@ -327,6 +344,17 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 	PJ_LOG(3,(__FILE__, "Incoming call from %.*s!!",
                          (int)inci.remote_info.slen,
                          inci.remote_info.ptr));
+
+	call_data_t *data = malloc(sizeof(call_data_t));
+    data->is_busy_rejected = PJ_FALSE;
+    pjsua_call_set_user_data(call_id, data);
+	if (pjsua_call_get_count() > 1) {
+		printf("Incoming call while another is active; rejecting.\n");
+        data->is_busy_rejected = PJ_TRUE;
+        pjsua_call_answer(call_id, PJSIP_SC_BUSY_HERE, NULL, NULL);
+        return;
+    }
+
 	if (pending_call_active) {
 		printf("Incoming call while another is pending; rejecting.\n");
 		pjsua_call_answer(call_id, 486, NULL, NULL);
