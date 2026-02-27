@@ -348,8 +348,12 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 
 
 static void sig_handler(int sig, siginfo_t *si, void *x) {
+	printf("sig_handler: signal %d received\n", sig);
 	switch(sig) {
 		case SIGTERM:
+			running = false;
+			break;
+		case SIGINT:
 			running = false;
 			break;
 		default:
@@ -550,6 +554,7 @@ int main(int argc, char *argv[]) {
 	sigemptyset(&sa.sa_mask);
 	sa.sa_sigaction = sig_handler;
 	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
 
 	printf("Dialer PID: %d\n", getpid());
 

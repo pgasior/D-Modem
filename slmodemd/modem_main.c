@@ -291,6 +291,8 @@ static int socket_stop (struct modem *m)
 	DBG("kill -%d %d\n", SIGTERM, pid);
 	if (pid) {
 		kill(pid, SIGTERM);	// terminate exec'ed child
+		int status;
+		waitpid(pid, &status, 0);
 	}
 	if (rcSIPtoMODEM) {
 		RcFixed_Delete(rcSIPtoMODEM);
