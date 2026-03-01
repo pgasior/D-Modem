@@ -495,6 +495,8 @@ static int socket_device_setup(struct device_struct *dev, const char *dev_name)
 
 static char link_name[PATH_MAX];
 
+static int slave_anchor_fd = 0;
+
 int create_pty(struct modem *m)
 {
 	struct termios termios;
@@ -533,6 +535,8 @@ int create_pty(struct modem *m)
 
 	m->pty = pty;
 	m->pty_name = pty_name;
+
+	slave_anchor_fd = open(pty_name, O_RDWR | O_NOCTTY);
 
 	modem_update_termios(m,&termios);
 
@@ -797,12 +801,14 @@ static int modem_run(struct modem *m, struct device_struct *dev)
 						DBG("pty closed.\n");
 						if(termios.c_cflag&HUPCL) {
 							modem_hangup(m);
+							// For some reason, the PTY doesn't seem to be re-created after hangup.
+							// As a workaround, in create_pty I just open the slave PTY and never close it, thus we never get EIO.
 							/* re-create PTM - simulate hangup */
-							ret = create_pty(m);
-							if (ret < 0) {
-								ERR("cannot re-create PTY.\n");
-								return -1;
-							}
+							// ret = create_pty(m);
+							// if (ret < 0) {
+							// 	ERR("cannot re-create PTY.\n");
+							// 	return -1;
+							// }
 						}
 						else
 							pty_closed = 1;
